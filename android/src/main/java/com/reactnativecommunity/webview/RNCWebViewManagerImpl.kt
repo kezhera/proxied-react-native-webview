@@ -28,6 +28,9 @@ import java.io.UnsupportedEncodingException
 import java.net.MalformedURLException
 import java.net.URL
 import java.util.Locale
+import androidx.webkit.ProxyController
+import androidx.webkit.ProxyConfig
+import java.util.concurrent.Executor
 
 val invalidCharRegex = "[\\\\/%\"]".toRegex()
 
@@ -92,7 +95,6 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
         webView.setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
-            webView.setIgnoreErrFailedForThisURL(url)
             val module = webView.reactApplicationContext.getNativeModule(RNCWebViewModule::class.java) ?: return@DownloadListener
             val request: DownloadManager.Request = try {
                 DownloadManager.Request(Uri.parse(url))
@@ -450,6 +452,32 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
                       }
                     }
                 }
+
+                if (source.hasKey("proxy")) {
+                  val proxy = source.getMap("proxy")
+                  val proxyUri = proxy!!.getString("uri");
+                  val proxyProtocol = proxy!!.getString("protocol");
+                  val proxyPort = proxy!!.getString("port");
+                  val proxyExcludedDomain = proxy!!.getString("excludedDomain")!!;
+
+                  if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+                    val pcInstance = ProxyController.getInstance()
+                    pcInstance?.let {
+                      val pxConfig = ProxyConfig.Builder()
+                        .addProxyRule(proxyProtocol + "://" + proxyUri + ":" + proxyPort)
+                        .addBypassRule(proxyProtocol + "://" + proxyExcludedDomain)
+                        .build()
+                      it.setProxyOverride(pxConfig, object : Executor {
+                        override fun execute(command: Runnable?) {
+                          command?.run {
+                          }
+                        }
+                      }) {
+                        Log.e(TAG, "Failed to set proxy")
+                      }
+                    }
+                  }
+                }
                 view.loadUrl(url!!, headerMap)
                 return
             }
@@ -714,5 +742,25 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
 
     fun setWebviewDebuggingEnabled(viewWrapper: RNCWebViewWrapper, enabled: Boolean) {
         RNCWebView.setWebContentsDebuggingEnabled(enabled)
+    }
+
+    fun setPaymentRequestEnabled(viewWrapper: RNCWebViewWrapper, enabled: Boolean) {
+        val view = viewWrapper.webView
+
+        try {
+            // Check if feature is supported at runtime
+            if (WebViewFeature.isFeatureSupported("PAYMENT_REQUEST")) {
+                // Use reflection to avoid compile-time errors on older WebKit versions
+                val method = WebSettingsCompat::class.java.getMethod(
+                    "setPaymentRequestEnabled",
+                    WebSettings::class.java,
+                    Boolean::class.javaPrimitiveType
+                )
+                method.invoke(null, view.settings, enabled)
+            }
+        } catch (e: Exception) {
+            // If not supported, just ignore
+            Log.w("RNCWebView", "PaymentRequest not supported: ${e.message}")
+        }
     }
 }
